@@ -1,0 +1,169 @@
+services:
+
+  # master mysql
+  mysql-master:
+    container_name: mysql-master
+    environment:
+      MYSQL_ROOT_PASSWORD: "327"
+      MYSQL_DATABASE: festival
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppass
+    ports:
+      - "3306:3306"
+    image: mysql:8.4.0
+    restart: always
+    volumes:
+      - mysql-data:/var/lib/mysql  # MySQL 데이터를 볼륨에 저장
+      - ./mysql-config/mysql-master/init-master.sql:/docker-entrypoint-initdb.d/init-master.sql
+      - ./mysql-config/mysql-master/my.cnf:/etc/my.cnf
+    networks:
+      - festival
+
+  mysql-replica:
+    container_name: mysql-replica
+    environment:
+      MYSQL_ROOT_PASSWORD: "327"
+    ports:
+      - "3307:3306"
+    image: mysql:8.4.0
+    restart: always
+    volumes:
+      - mysql-replica-data:/var/lib/mysql  # MySQL 데이터를 볼륨에 저장
+      - ./mysql-config/mysql-replica/my.cnf:/etc/my.cnf
+    networks:
+      - festival
+    depends_on:
+      - mysql-master
+
+  proxysql:
+    image: proxysql/proxysql:latest
+    container_name: proxysql
+    ports:
+      - "6033:6033" #admin
+      - "6032:6032" #
+    volumes:
+      - proxysql-data:/var/lib/proxysql
+      - ./mysql-config/proxysql.cnf:/etc/proxysql.cnf
+    networks:
+      - festival
+    depends_on:
+      - mysql-master
+      - mysql-replica
+
+#---------------------------------------------------------------------
+
+# spring service
+  spring: # 서비스 이름
+    container_name: spring-skufestival # 컨테이너 이름
+    ports: # 포트 지정
+      - "8080:8080"
+    image: jd1019/back-skufestival:latest # 사용하고자 하는 이미지
+    environment:
+      - SPRING_PROFILE=dev
+    restart: always
+    networks:
+      - festival # 네트워크
+    healthcheck:
+      test: ["CMD", "curl", "--silent", "--fail", "http://localhost:8080/actuator/health"]  # Spring Boot Health Check URL
+      interval: 30s  # 30초마다 상태 체크
+      retries: 3  # 실패할 경우 재시도 횟수
+      start_period: 10s  # 컨테이너 시작 후 체크 시작까지의 대기 시간
+      timeout: 10s  # 상태 체크 타임아웃
+    depends_on:
+      - mysql-master # Spring 서비스가 mysql이 시작된 후 실행되도록 설정
+
+  spring2:
+    container_name: spring-skufestival-2
+    ports:
+      - "8081:8080"
+    image: jd1019/back-skufestival:latest
+    environment:
+      - SPRING_PROFILE=dev
+    restart: always
+    networks:
+      - festival
+    depends_on:
+      - mysql-master
+
+  nginx:
+    container_name: nginx-skufestival
+    ports:
+      - "80:80"
+      - "443:443"
+    image: nginx:latest
+    restart: always
+    volumes:
+      - /etc/letsencrypt/live/2025skufestival.site/fullchain.pem:/etc/ssl/certs/fullchain.pem:ro
+      - /etc/letsencrypt/live/2025skufestival.site/privkey.pem:/etc/ssl/private/privkey.pem:ro
+      - ./conf.d:/etc/nginx/conf.d
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    networks:
+      - festival
+    depends_on:
+      - spring
+
+  react:
+    container_name: react-skufestival
+    ports:
+      - "5173:5173"
+      - "3000:3000"
+    image: jd1019/front-skufestival:latest
+    restart: always
+    networks:
+      - festival
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio-skufestival
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: wlsehddl1
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - festival
+
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    ports:
+      - "8888:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - festival
+    restart: always
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - festival
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "3333:3000"
+    networks:
+      - festival
+    depends_on:
+      - prometheus
+
+networks:
+  festival:
+    external: true  # 외부 네트워크 사용
+
+volumes:
+  minio-data:
+  mysql-data:
+  proxysql-data:
+  mysql-replica-data: # mysql 8.0.0 이상에서 복제 데이터 저장소 slave -> replica로 변경됨
