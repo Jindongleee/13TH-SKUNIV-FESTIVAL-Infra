@@ -14,3 +14,5 @@
 3. Promethus, Grafana -> 데이터 로깅 + dozzle
 4. ProxySQL (Master-Replica 전략)
 
+발생 비용 0원
+
